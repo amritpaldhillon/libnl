@@ -27,6 +27,34 @@
 #include <netlink/object.h>
 #include <netlink/utils.h>
 
+static inline void nl_object_read_lock(struct nl_object *obj)
+{
+	#ifndef DISABLE_PTHREADS
+	nl_read_lock(&(obj->ce_lock));
+	#endif
+}
+
+static inline void nl_object_read_unlock(struct nl_object *obj)
+{
+	#ifndef DISABLE_PTHREADS
+	nl_read_unlock(&(obj->ce_lock));
+	#endif
+}
+
+static inline void nl_object_write_lock(struct nl_object *obj)
+{
+	#ifndef DISABLE_PTHREADS
+	nl_write_lock(&(obj->ce_lock));
+	#endif
+}
+
+static inline void nl_object_write_unlock(struct nl_object *obj)
+{
+	#ifndef DISABLE_PTHREADS
+	nl_write_unlock(&(obj->ce_lock));
+	#endif
+}
+
 static inline struct nl_object_ops *obj_ops(struct nl_object *obj)
 {
 	if (!obj->ce_ops)
@@ -57,6 +85,9 @@ struct nl_object *nl_object_alloc(struct nl_object_ops *ops)
 		return NULL;
 
 	new->ce_refcnt = 1;
+#ifndef DISABLE_PTHREADS
+	pthread_rwlock_init(&(new->ce_lock), NULL);
+#endif
 	nl_init_list_head(&new->ce_list);
 
 	new->ce_ops = ops;
@@ -175,14 +206,20 @@ void nl_object_free(struct nl_object *obj)
 
 	ops = obj_ops(obj);
 
+	nl_object_read_lock(obj);
 	if (obj->ce_refcnt > 0)
 		NL_DBG(1, "Warning: Freeing object in use...\n");
+	nl_object_read_unlock(obj);
 
 	if (obj->ce_cache)
 		nl_cache_remove(obj);
 
 	if (ops->oo_free_data)
 		ops->oo_free_data(obj);
+
+#ifndef DISABLE_PTHREADS
+	pthread_rwlock_destroy(&(obj->ce_lock));
+#endif
 
 	NL_DBG(4, "Freed object %p\n", obj);
 
@@ -202,9 +239,11 @@ void nl_object_free(struct nl_object *obj)
  */
 void nl_object_get(struct nl_object *obj)
 {
+	nl_object_write_lock(obj);
 	obj->ce_refcnt++;
 	NL_DBG(4, "New reference to object %p, total %d\n",
 	       obj, obj->ce_refcnt);
+	nl_object_write_unlock(obj);
 }
 
 /**
@@ -216,6 +255,7 @@ void nl_object_put(struct nl_object *obj)
 	if (!obj)
 		return;
 
+	nl_object_write_lock(obj);
 	obj->ce_refcnt--;
 	NL_DBG(4, "Returned object reference %p, %d remaining\n",
 	       obj, obj->ce_refcnt);
@@ -223,8 +263,12 @@ void nl_object_put(struct nl_object *obj)
 	if (obj->ce_refcnt < 0)
 		BUG();
 
-	if (obj->ce_refcnt <= 0)
+	if (obj->ce_refcnt <= 0) {
+		nl_object_write_unlock(obj);
 		nl_object_free(obj);
+	} else {
+		nl_object_write_unlock(obj);
+	}
 }
 
 /**
@@ -234,7 +278,11 @@ void nl_object_put(struct nl_object *obj)
  */
 int nl_object_shared(struct nl_object *obj)
 {
-	return obj->ce_refcnt > 1;
+	int ret;
+	nl_object_read_lock(obj);
+	ret = (obj->ce_refcnt > 1);
+	nl_object_read_unlock(obj);
+	return ret;
 }
 
 /** @} */
@@ -490,7 +538,11 @@ void nl_object_keygen(struct nl_object *obj, uint32_t *hashkey,
  */
 int nl_object_get_refcnt(struct nl_object *obj)
 {
-	return obj->ce_refcnt;
+	int ret;
+	nl_object_read_lock(obj);
+	ret = obj->ce_refcnt;
+	nl_object_read_unlock(obj);
+	return ret;
 }
 
 /**

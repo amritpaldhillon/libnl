@@ -172,6 +172,13 @@ extern "C" {
  * @{
  */
 
+#ifndef DISABLE_PTHREADS
+#include <pthread.h>
+#define NL_DECL_LOCK(NAME) pthread_rwlock_t NAME;
+#else
+#define NL_DECL_LOCK(NAME)
+#endif
+
 /**
  * Common Object Header
  *
@@ -180,6 +187,7 @@ extern "C" {
  */
 #define NLHDR_COMMON				\
 	int			ce_refcnt;	\
+	NL_DECL_LOCK(ce_lock) \
 	struct nl_object_ops *	ce_ops;		\
 	struct nl_cache *	ce_cache;	\
 	struct nl_list_head	ce_list;	\
